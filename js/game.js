@@ -2,6 +2,7 @@ import * as maplibregl from 'https://unpkg.com/maplibre-gl@6.10.0/dist/maplibre-
 
 const target = { name: 'Ulm', country: 'Allemagne', countryCode: 'DEU', lat: 48.4011, lon: 9.9876 };
 const COUNTRIES_URL = 'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson';
+
 let guess = null;
 let guessMarker = null;
 let answerMarker = null;
@@ -40,30 +41,19 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
-map.on('load', async () => {
+map.on('load', () => {
   map.setProjection({ type: 'globe' });
   addRevealLayers();
-  try {
-    const response = await fetch(COUNTRIES_URL);
-    if (!response.ok) throw new Error('Country data unavailable');
-    countriesData = await response.json();
-  } catch (error) {
-    console.warn('Country outline unavailable:', error);
-  }
+  loadCountries();
 });
 
 map.on('click', (event) => {
-  if (!result.hidden) return;
-
+  if (!result.hidden || validateButton.hidden) return;
   guess = { lon: event.lngLat.lng, lat: event.lngLat.lat };
-
   guessMarker?.remove();
-  const markerElement = document.createElement('div');
-  markerElement.className = 'guess-marker';
-  guessMarker = new maplibregl.Marker({ element: markerElement })
-    .setLngLat([guess.lon, guess.lat])
-    .addTo(map);
-
+  const el = document.createElement('div');
+  el.className = 'guess-marker';
+  guessMarker = new maplibregl.Marker({ element: el }).setLngLat([guess.lon, guess.lat]).addTo(map);
   validateButton.disabled = false;
 });
 
@@ -77,36 +67,23 @@ validateButton.addEventListener('click', () => {
   const score = scoreFromDistance(distance);
   const route = greatCircle(guess, target);
 
-  map.getSource('answer-route').setData({
-    type: 'Feature',
-    geometry: { type: 'LineString', coordinates: route }
+  // The essential result never depends on an optional network layer.
+  showAnswerMarker();
+  showRoute(route);
+  showResult(distance, score);
+  resetButton.hidden = false;
+
+  // Camera animation is deliberately independent of the route layer.
+  const midpoint = greatCircle(guess, target, 2)[1];
+  map.easeTo({
+    center: [normalizeLon(midpoint[0]), midpoint[1]],
+    zoom: zoomForDistance(distance),
+    duration: 1200,
+    essential: true
   });
 
-  map.fitBounds(boundsForCoordinates(route), {
-    padding: { top: 70, bottom: 70, left: 45, right: 45 },
-    maxZoom: 5,
-    duration: 1100
-  });
-
-  window.setTimeout(() => {
-    const markerElement = document.createElement('div');
-    markerElement.className = 'answer-marker';
-    answerMarker = new maplibregl.Marker({ element: markerElement })
-      .setLngLat([target.lon, target.lat])
-      .addTo(map);
-
-    map.setPaintProperty('answer-route-line', 'line-opacity', 1);
-    revealCountry();
-
-    window.setTimeout(() => {
-      distanceOutput.textContent = distance < 1
-        ? `Votre choix se trouve à ${Math.round(distance * 1000).toLocaleString('fr-FR')} m de la bonne réponse.`
-        : `Votre choix se trouve à ${Math.round(distance).toLocaleString('fr-FR')} km de la bonne réponse.`;
-      scoreOutput.textContent = `${score} / 100 points`;
-      result.hidden = false;
-      resetButton.hidden = false;
-    }, 350);
-  }, 650);
+  // Country geometry is progressive enhancement: failure cannot block the result.
+  revealCountry();
 });
 
 resetButton.addEventListener('click', () => {
@@ -119,54 +96,99 @@ resetButton.addEventListener('click', () => {
   validateButton.hidden = false;
   validateButton.disabled = true;
   resetButton.hidden = true;
-  map.getSource('answer-route')?.setData({ type: 'FeatureCollection', features: [] });
-  map.getSource('answer-country')?.setData({ type: 'FeatureCollection', features: [] });
-  map.setPaintProperty('answer-route-line', 'line-opacity', 0);
+  const routeSource = map.getSource('answer-route');
+  const countrySource = map.getSource('answer-country');
+  routeSource?.setData(emptyCollection());
+  countrySource?.setData(emptyCollection());
   map.flyTo({ center: [8, 25], zoom: 1.35, essential: true });
 });
 
-function addRevealLayers() {
-  map.addSource('answer-route', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: [] }
+function showAnswerMarker() {
+  answerMarker?.remove();
+  const el = document.createElement('div');
+  el.className = 'answer-marker';
+  answerMarker = new maplibregl.Marker({ element: el })
+    .setLngLat([target.lon, target.lat])
+    .addTo(map);
+}
+
+function showRoute(route) {
+  const source = map.getSource('answer-route');
+  if (!source) return;
+  source.setData({
+    type: 'Feature',
+    properties: {},
+    geometry: { type: 'LineString', coordinates: route.map(([lon, lat]) => [normalizeLon(lon), lat]) }
   });
+}
+
+function showResult(distance, score) {
+  distanceOutput.textContent = distance < 1
+    ? `Votre choix se trouve à ${Math.round(distance * 1000).toLocaleString('fr-FR')} m de la bonne réponse.`
+    : `Votre choix se trouve à ${Math.round(distance).toLocaleString('fr-FR')} km de la bonne réponse.`;
+  scoreOutput.textContent = `${score} / 100 points`;
+  result.hidden = false;
+}
+
+function addRevealLayers() {
+  map.addSource('answer-route', { type: 'geojson', data: emptyCollection() });
   map.addLayer({
     id: 'answer-route-line',
     type: 'line',
     source: 'answer-route',
     paint: {
       'line-color': '#ffffff',
-      'line-width': 2.5,
-      'line-opacity': 0,
-      'line-dasharray': [2, 2]
+      'line-width': 3,
+      'line-opacity': 0.95
     }
   });
 
-  map.addSource('answer-country', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: [] }
-  });
+  map.addSource('answer-country', { type: 'geojson', data: emptyCollection() });
   map.addLayer({
     id: 'answer-country-fill',
     type: 'fill',
     source: 'answer-country',
-    paint: { 'fill-color': '#37d67a', 'fill-opacity': 0.10 }
+    paint: { 'fill-color': '#37d67a', 'fill-opacity': 0.12 }
   });
   map.addLayer({
     id: 'answer-country-outline',
     type: 'line',
     source: 'answer-country',
-    paint: { 'line-color': '#37d67a', 'line-width': 2.5, 'line-opacity': 0.95 }
+    paint: { 'line-color': '#37d67a', 'line-width': 3, 'line-opacity': 1 }
   });
+}
+
+async function loadCountries() {
+  try {
+    const response = await fetch(COUNTRIES_URL);
+    if (!response.ok) return;
+    countriesData = await response.json();
+  } catch (error) {
+    console.warn('Country outline unavailable:', error);
+  }
 }
 
 function revealCountry() {
   if (!countriesData) return;
   const feature = countriesData.features.find(item => {
     const p = item.properties || {};
-    return p['ISO3166-1-Alpha-3'] === target.countryCode || p.ISO_A3 === target.countryCode;
+    return p['ISO3166-1-Alpha-3'] === target.countryCode || p.ISO_A3 === target.countryCode || p.ADM0_A3 === target.countryCode;
   });
-  if (feature) map.getSource('answer-country').setData(feature);
+  map.getSource('answer-country')?.setData(feature || emptyCollection());
+}
+
+function emptyCollection() {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+function zoomForDistance(distanceKm) {
+  if (distanceKm < 50) return 7;
+  if (distanceKm < 150) return 6;
+  if (distanceKm < 400) return 5;
+  if (distanceKm < 1000) return 4;
+  if (distanceKm < 2500) return 3;
+  if (distanceKm < 5000) return 2;
+  return 1.15;
 }
 
 function greatCircle(start, end, steps = 128) {
@@ -178,7 +200,7 @@ function greatCircle(start, end, steps = 128) {
     Math.sin((lat2 - lat1) / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2
   ));
-  if (delta === 0) return [[start.lon, start.lat], [end.lon, end.lat]];
+  if (delta < 1e-10) return [[start.lon, start.lat], [end.lon, end.lat]];
   const coords = [];
   for (let i = 0; i <= steps; i++) {
     const f = i / steps;
@@ -189,25 +211,11 @@ function greatCircle(start, end, steps = 128) {
     const z = a * Math.sin(lat1) + b * Math.sin(lat2);
     coords.push([toDeg(Math.atan2(y, x)), toDeg(Math.atan2(z, Math.sqrt(x * x + y * y)))]);
   }
-  return unwrapLongitudes(coords);
+  return coords;
 }
 
-function unwrapLongitudes(coords) {
-  const result = [coords[0].slice()];
-  for (let i = 1; i < coords.length; i++) {
-    let lon = coords[i][0];
-    const previous = result[i - 1][0];
-    while (lon - previous > 180) lon -= 360;
-    while (lon - previous < -180) lon += 360;
-    result.push([lon, coords[i][1]]);
-  }
-  return result;
-}
-
-function boundsForCoordinates(coords) {
-  const bounds = new maplibregl.LngLatBounds();
-  coords.forEach(coord => bounds.extend(coord));
-  return bounds;
+function normalizeLon(lon) {
+  return ((lon + 180) % 360 + 360) % 360 - 180;
 }
 
 function haversineKm(lat1, lon1, lat2, lon2) {
