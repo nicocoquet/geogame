@@ -7,6 +7,7 @@ let guess = null;
 let guessMarker = null;
 let answerMarker = null;
 let countriesData = null;
+let revealAnimationFrame = null;
 
 const validateButton = document.querySelector('#validate');
 const resetButton = document.querySelector('#reset');
@@ -67,27 +68,31 @@ validateButton.addEventListener('click', () => {
   const score = scoreFromDistance(distance);
   const route = greatCircle(guess, target);
 
-  // The essential result never depends on an optional network layer.
-  showAnswerMarker();
-  showRoute(route);
-  showResult(distance, score);
-  resetButton.hidden = false;
-
-  // Camera animation is deliberately independent of the route layer.
+  // First frame the journey, then draw the geodesic progressively.
   const midpoint = greatCircle(guess, target, 2)[1];
   map.easeTo({
     center: [normalizeLon(midpoint[0]), midpoint[1]],
     zoom: zoomForDistance(distance),
-    duration: 1200,
+    duration: 700,
     essential: true
   });
 
-  // Country geometry is progressive enhancement: failure cannot block the result.
-  revealCountry();
+  window.setTimeout(() => {
+    animateRoute(route, distance, () => {
+      showAnswerMarker();
+      revealCountry();
+      showResult(distance, score);
+      resetButton.hidden = false;
+    });
+  }, 450);
 });
 
 resetButton.addEventListener('click', () => {
   guess = null;
+  if (revealAnimationFrame) {
+    cancelAnimationFrame(revealAnimationFrame);
+    revealAnimationFrame = null;
+  }
   guessMarker?.remove();
   answerMarker?.remove();
   guessMarker = null;
@@ -112,14 +117,38 @@ function showAnswerMarker() {
     .addTo(map);
 }
 
-function showRoute(route) {
+function animateRoute(route, distanceKm, onComplete) {
   const source = map.getSource('answer-route');
-  if (!source) return;
-  source.setData({
-    type: 'Feature',
-    properties: {},
-    geometry: { type: 'LineString', coordinates: route.map(([lon, lat]) => [normalizeLon(lon), lat]) }
-  });
+  if (!source) {
+    onComplete();
+    return;
+  }
+
+  const coordinates = route.map(([lon, lat]) => [normalizeLon(lon), lat]);
+  const duration = Math.min(1600, Math.max(900, 900 + distanceKm / 8));
+  const startedAt = performance.now();
+
+  const draw = now => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 2);
+    const lastIndex = Math.max(1, Math.floor(eased * (coordinates.length - 1)));
+    const visible = coordinates.slice(0, lastIndex + 1);
+
+    source.setData({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'LineString', coordinates: visible }
+    });
+
+    if (progress < 1) {
+      revealAnimationFrame = requestAnimationFrame(draw);
+    } else {
+      revealAnimationFrame = null;
+      onComplete();
+    }
+  };
+
+  revealAnimationFrame = requestAnimationFrame(draw);
 }
 
 function showResult(distance, score) {
