@@ -11,34 +11,26 @@
 <body>
   <main class="game">
     <header class="game__header">
-      <div>
-        <p class="eyebrow">Prototype V0</p>
-        <h1>GeoGame</h1>
-      </div>
+      <div><p class="eyebrow">Prototype V0.2</p><h1>GeoGame</h1></div>
       <p class="round">Question 1 / 1</p>
     </header>
-
     <section class="question" aria-live="polite">
       <p>Où est né Albert Einstein&nbsp;?</p>
       <span>Pose ton repère sur le globe, puis valide.</span>
     </section>
-
     <div id="map" aria-label="Globe interactif sans frontières ni noms de lieux"></div>
-
     <section class="controls">
-      <p id="status">Fais tourner et zoome le globe, puis touche l’endroit choisi.</p>
       <button id="validate" type="button" disabled>Valider ce lieu</button>
       <button id="reset" type="button" class="secondary" hidden>Rejouer le prototype</button>
     </section>
-
     <section id="result" class="result" hidden aria-live="polite">
       <p class="result__label">Résultat</p>
       <p id="distance" class="result__distance"></p>
-      <p id="score" class="result__score"></p>
       <p><strong>Réponse :</strong> Ulm, Allemagne.</p>
+      <p id="score" class="result__score"></p>
+      <p class="result__legend"><span class="dot dot--guess"></span> Ton choix <span class="dot dot--answer"></span> Bonne réponse</p>
     </section>
   </main>
-
   <script type="module" src="./js/game.js"></script>
 </body>
 </html>
